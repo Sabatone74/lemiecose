@@ -86,7 +86,9 @@ input,select{width:100%;padding:11px;border-radius:10px;border:1px solid var(--l
 const CKEY='lemiecose.cats';
 let CATS=['Casa','Salute','Spese','Famiglia','Altro'];
 try{const c=JSON.parse(localStorage.getItem(CKEY));if(Array.isArray(c)&&c.length)CATS=c}catch(e){}
-const saveCats=()=>{try{localStorage.setItem(CKEY,JSON.stringify(CATS))}catch(e){}};
+const sortCats=()=>CATS.sort((a,b)=>a.localeCompare(b,'it',{sensitivity:'base'}));
+sortCats();
+const saveCats=()=>{sortCats();try{localStorage.setItem(CKEY,JSON.stringify(CATS))}catch(e){}};
 const KEY='lemiecose.v1';
 let tasks=[];try{tasks=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){}
 let filter='Tutte';
@@ -131,7 +133,7 @@ $('cat-list').onchange=e=>{
  if(!nu||(nu!==old&&CATS.includes(nu))){e.target.value=old;return}
  CATS[i]=nu;tasks.forEach(t=>{if(t.cat===old)t.cat=nu});
  if(filter===old)filter=nu;
- saveCats();save();fillCats();render();
+ saveCats();save();renderCats();fillCats();render();
 };
 $('cat-list').onclick=e=>{
  const i=e.target.dataset.rm;if(i===undefined)return;
