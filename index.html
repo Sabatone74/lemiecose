@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Le mie cose</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Le mie cose">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#4f46e5">
+<style>
+:root{--bg:#f5f5f7;--card:#fff;--text:#1d1d1f;--muted:#6e6e73;--accent:#4f46e5;--red:#d93025;--line:#e5e5ea}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--accent:#818cf8;--red:#ff6b61;--line:#38383a}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--text);font:16px -apple-system,system-ui,sans-serif;padding:env(safe-area-inset-top) 0 calc(90px + env(safe-area-inset-bottom))}
+header{padding:20px 16px 8px}
+h1{margin:0;font-size:28px}
+.sub{color:var(--muted);font-size:14px;margin-top:2px}
+.tabs{display:flex;gap:8px;overflow-x:auto;padding:8px 16px}
+.tab{flex:none;padding:7px 14px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:14px}
+.tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:18px 16px 6px}
+h2.late{color:var(--red)}
+.item{display:flex;align-items:center;gap:12px;background:var(--card);margin:0 16px 8px;padding:12px;border-radius:14px}
+.chk{width:26px;height:26px;border-radius:50%;border:2px solid var(--accent);background:none;flex:none;color:#fff;font-size:15px;line-height:1}
+.done .chk{background:var(--accent)}
+.done .t{text-decoration:line-through;color:var(--muted)}
+.body{flex:1;min-width:0}
+.t{font-weight:500;word-break:break-word}
+.m{font-size:13px;color:var(--muted);margin-top:2px}
+.late .m{color:var(--red)}
+.del{background:none;border:none;color:var(--muted);font-size:20px;padding:4px 8px}
+.empty{text-align:center;color:var(--muted);padding:40px 16px}
+.fab{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:32px;box-shadow:0 4px 14px rgba(0,0,0,.3)}
+dialog{border:none;border-radius:20px;padding:20px;width:calc(100% - 32px);max-width:420px;background:var(--card);color:var(--text)}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+input,select{width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:16px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.btns{display:flex;gap:8px;margin-top:18px}
+.btns button{flex:1;padding:12px;border-radius:12px;border:none;font-size:16px;font-weight:600}
+.ok{background:var(--accent);color:#fff}.no{background:var(--bg);color:var(--text)}
+.bell{margin:8px 16px;padding:12px;border-radius:12px;background:var(--card);font-size:14px;display:none}
+.bell button{margin-top:8px;padding:8px 14px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-size:14px}
+</style>
+</head>
+<body>
+<header><h1>Le mie cose</h1><div class="sub" id="sub"></div></header>
+<div class="bell" id="bell"></div>
+<div class="tabs" id="tabs"></div>
+<main id="list"></main>
+<button class="fab" id="add" aria-label="Aggiungi">+</button>
+
+<dialog id="dlg">
+<form method="dialog" id="form">
+<h3 style="margin:0">Nuova attività</h3>
+<label>Cosa devo fare</label><input id="f-title" required placeholder="Es. Pagare la bolletta">
+<label>Categoria</label><select id="f-cat"></select>
+<div class="row">
+<div><label>Data</label><input type="date" id="f-date"></div>
+<div><label>Ora</label><input type="time" id="f-time" value="09:00"></div>
+</div>
+<label>Ripeti</label>
+<select id="f-rep"><option value="">Mai</option><option value="d">Ogni giorno</option><option value="w">Ogni settimana</option><option value="m">Ogni mese</option><option value="y">Ogni anno</option></select>
+<div class="btns"><button type="button" class="no" id="cancel">Annulla</button><button class="ok" type="submit">Salva</button></div>
+</form>
+</dialog>
+
+<script>
+const CATS=['Casa','Salute','Spese','Famiglia','Altro'];
+const KEY='lemiecose.v1';
+let tasks=[];try{tasks=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){}
+let filter='Tutte';
+const $=id=>document.getElementById(id);
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(tasks))}catch(e){}};
+const due=t=>t.date?new Date(t.date+'T'+(t.time||'09:00')):null;
+const fmt=t=>{const d=due(t);if(!d)return'Senza scadenza';return d.toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'short'})+' · '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})};
+const REP={d:'ogni giorno',w:'ogni settimana',m:'ogni mese',y:'ogni anno'};
+function next(t){const d=due(t);if(t.rep==='d')d.setDate(d.getDate()+1);if(t.rep==='w')d.setDate(d.getDate()+7);if(t.rep==='m')d.setMonth(d.getMonth()+1);if(t.rep==='y')d.setFullYear(d.getFullYear()+1);
+ const p=n=>String(n).padStart(2,'0');t.date=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());t.notified=false}
+function render(){
+ $('tabs').innerHTML=['Tutte',...CATS].map(c=>`<button class="tab ${c===filter?'on':''}" data-c="${c}">${c}</button>`).join('');
+ const now=new Date(),end=new Date();end.setHours(23,59,59,999);
+ const vis=tasks.filter(t=>filter==='Tutte'||t.cat===filter);
+ const open=vis.filter(t=>!t.done).sort((a,b)=>(due(a)||1e15)-(due(b)||1e15));
+ const groups=[['Scadute',open.filter(t=>due(t)&&due(t)<now),'late'],['Oggi',open.filter(t=>due(t)&&due(t)>=now&&due(t)<=end),''],['Prossime',open.filter(t=>due(t)&&due(t)>end),''],['Senza scadenza',open.filter(t=>!due(t)),''],['Completate',vis.filter(t=>t.done),'']];
+ let h='';
+ for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m">${t.cat} · ${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
+ $('list').innerHTML=h||'<div class="empty">Nessuna attività.<br>Tocca + per aggiungerne una.</div>';
+ const late=tasks.filter(t=>!t.done&&due(t)&&due(t)<now).length;
+ $('sub').textContent=late?late+(late===1?' attività scaduta':' attività scadute'):'Tutto sotto controllo';
+ if('setAppBadge' in navigator){late?navigator.setAppBadge(late).catch(()=>{}):navigator.clearAppBadge().catch(()=>{})}
+}
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('tabs').onclick=e=>{if(e.target.dataset.c){filter=e.target.dataset.c;render()}};
+$('list').onclick=e=>{
+ const id=e.target.dataset.id,del=e.target.dataset.del;
+ if(id){const t=tasks.find(x=>x.id==id);if(t.rep&&!t.done&&due(t)){next(t)}else t.done=!t.done;save();render()}
+ if(del&&confirm('Eliminare questa attività?')){tasks=tasks.filter(x=>x.id!=del);save();render()}
+};
+$('f-cat').innerHTML=CATS.map(c=>`<option>${c}</option>`).join('');
+$('add').onclick=()=>{$('form').reset();$('f-time').value='09:00';$('f-date').value=new Date().toLocaleDateString('sv');$('dlg').showModal()};
+$('cancel').onclick=()=>$('dlg').close();
+$('form').onsubmit=()=>{
+ tasks.push({id:Date.now(),title:$('f-title').value.trim(),cat:$('f-cat').value,date:$('f-date').value,time:$('f-time').value,rep:$('f-rep').value,done:false,notified:false});
+ save();render();askPerm();
+};
+
+// Notifiche
+function bell(){
+ const b=$('bell');
+ if(!('Notification' in window)){b.style.display='block';b.textContent='Per le notifiche aggiungi prima l’app alla schermata Home (Condividi → Aggiungi alla schermata Home), poi riaprila da lì.';return}
+ if(Notification.permission==='default'){b.style.display='block';b.innerHTML='Vuoi ricevere i promemoria?<br><button id="allow">Attiva notifiche</button>';$('allow').onclick=askPerm}
+ else b.style.display='none';
+}
+async function askPerm(){if('Notification' in window&&Notification.permission==='default'){await Notification.requestPermission();bell()}}
+async function notify(t){
+ try{const reg=await navigator.serviceWorker.getRegistration();
+  if(reg)reg.showNotification(t.title,{body:t.cat+' · '+fmt(t),tag:'t'+t.id});
+  else new Notification(t.title,{body:t.cat})}catch(e){}
+}
+function check(){
+ if(!('Notification' in window)||Notification.permission!=='granted'){render();return}
+ const now=new Date();let ch=false;
+ for(const t of tasks){if(!t.done&&!t.notified&&due(t)&&due(t)<=now){t.notified=true;ch=true;notify(t)}}
+ if(ch)save();render();
+}
+setInterval(check,30000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+bell();check();
+</script>
+</body>
+</html>
