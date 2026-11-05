@@ -33,6 +33,8 @@ h2.late{color:var(--red)}
 .m{font-size:13px;color:var(--muted);margin-top:2px}
 .late .m{color:var(--red)}
 .del{background:none;border:none;color:var(--muted);font-size:20px;padding:4px 8px}
+.crow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.crow input{flex:1}
 .empty{text-align:center;color:var(--muted);padding:40px 16px}
 .fab{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:32px;box-shadow:0 4px 14px rgba(0,0,0,.3)}
 dialog{border:none;border-radius:20px;padding:20px;width:calc(100% - 32px);max-width:420px;background:var(--card);color:var(--text)}
@@ -69,8 +71,22 @@ input,select{width:100%;padding:11px;border-radius:10px;border:1px solid var(--l
 </form>
 </dialog>
 
+<dialog id="cdlg">
+<h3 style="margin:0 0 8px">Le tue categorie</h3>
+<div class="sub" style="margin-bottom:8px">Tocca un nome per rinominarlo.</div>
+<div id="cat-list"></div>
+<form id="cat-new" class="row" style="margin-top:12px">
+<input id="cat-name" placeholder="Nuova categoria" maxlength="24" style="flex:3">
+<button class="ok" type="submit" style="flex:1;border:none;border-radius:10px;font-size:16px;font-weight:600">Aggiungi</button>
+</form>
+<div class="btns"><button type="button" class="no" id="cat-close">Chiudi</button></div>
+</dialog>
+
 <script>
-const CATS=['Casa','Salute','Spese','Famiglia','Altro'];
+const CKEY='lemiecose.cats';
+let CATS=['Casa','Salute','Spese','Famiglia','Altro'];
+try{const c=JSON.parse(localStorage.getItem(CKEY));if(Array.isArray(c)&&c.length)CATS=c}catch(e){}
+const saveCats=()=>{try{localStorage.setItem(CKEY,JSON.stringify(CATS))}catch(e){}};
 const KEY='lemiecose.v1';
 let tasks=[];try{tasks=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){}
 let filter='Tutte';
@@ -82,27 +98,57 @@ const REP={d:'ogni giorno',w:'ogni settimana',m:'ogni mese',y:'ogni anno'};
 function next(t){const d=due(t);if(t.rep==='d')d.setDate(d.getDate()+1);if(t.rep==='w')d.setDate(d.getDate()+7);if(t.rep==='m')d.setMonth(d.getMonth()+1);if(t.rep==='y')d.setFullYear(d.getFullYear()+1);
  const p=n=>String(n).padStart(2,'0');t.date=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());t.notified=false}
 function render(){
- $('tabs').innerHTML=['Tutte',...CATS].map(c=>`<button class="tab ${c===filter?'on':''}" data-c="${c}">${c}</button>`).join('');
+ if(filter!=='Tutte'&&!CATS.includes(filter))filter='Tutte';
+ $('tabs').innerHTML=['Tutte',...CATS].map(c=>`<button class="tab ${c===filter?'on':''}" data-c="${esc(c)}">${esc(c)}</button>`).join('')+'<button class="tab" data-manage="1">⚙︎ Categorie</button>';
  const now=new Date(),end=new Date();end.setHours(23,59,59,999);
  const vis=tasks.filter(t=>filter==='Tutte'||t.cat===filter);
  const open=vis.filter(t=>!t.done).sort((a,b)=>(due(a)||1e15)-(due(b)||1e15));
  const groups=[['Scadute',open.filter(t=>due(t)&&due(t)<now),'late'],['Oggi',open.filter(t=>due(t)&&due(t)>=now&&due(t)<=end),''],['Prossime',open.filter(t=>due(t)&&due(t)>end),''],['Senza scadenza',open.filter(t=>!due(t)),''],['Completate',vis.filter(t=>t.done),'']];
  let h='';
- for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m">${t.cat} · ${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
+ for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m">${esc(t.cat)} ·${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
  $('list').innerHTML=h||'<div class="empty">Nessuna attività.<br>Tocca + per aggiungerne una.</div>';
  const late=tasks.filter(t=>!t.done&&due(t)&&due(t)<now).length;
  $('sub').textContent=late?late+(late===1?' attività scaduta':' attività scadute'):'Tutto sotto controllo';
  if('setAppBadge' in navigator){late?navigator.setAppBadge(late).catch(()=>{}):navigator.clearAppBadge().catch(()=>{})}
 }
 const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-$('tabs').onclick=e=>{if(e.target.dataset.c){filter=e.target.dataset.c;render()}};
+$('tabs').onclick=e=>{
+ if(e.target.dataset.manage){renderCats();$('cdlg').showModal();return}
+ if(e.target.dataset.c){filter=e.target.dataset.c;render()}
+};
 $('list').onclick=e=>{
  const id=e.target.dataset.id,del=e.target.dataset.del;
  if(id){const t=tasks.find(x=>x.id==id);if(t.rep&&!t.done&&due(t)){next(t)}else t.done=!t.done;save();render()}
  if(del&&confirm('Eliminare questa attività?')){tasks=tasks.filter(x=>x.id!=del);save();render()}
 };
-$('f-cat').innerHTML=CATS.map(c=>`<option>${c}</option>`).join('');
-$('add').onclick=()=>{$('form').reset();$('f-time').value='09:00';$('f-date').value=new Date().toLocaleDateString('sv');$('dlg').showModal()};
+const fillCats=()=>{$('f-cat').innerHTML=CATS.map(c=>`<option>${esc(c)}</option>`).join('')};
+function renderCats(){
+ $('cat-list').innerHTML=CATS.map((c,i)=>`<div class="crow"><input value="${esc(c)}" data-ren="${i}" maxlength="24"><button type="button" class="del" data-rm="${i}" aria-label="Elimina">✕</button></div>`).join('');
+}
+$('cat-list').onchange=e=>{
+ const i=e.target.dataset.ren;if(i===undefined)return;
+ const old=CATS[i],nu=e.target.value.trim();
+ if(!nu||(nu!==old&&CATS.includes(nu))){e.target.value=old;return}
+ CATS[i]=nu;tasks.forEach(t=>{if(t.cat===old)t.cat=nu});
+ if(filter===old)filter=nu;
+ saveCats();save();fillCats();render();
+};
+$('cat-list').onclick=e=>{
+ const i=e.target.dataset.rm;if(i===undefined)return;
+ if(CATS.length<2){alert('Serve almeno una categoria.');return}
+ const old=CATS[i];
+ if(!confirm('Eliminare "'+old+'"? Le sue attività passeranno a un’altra categoria.'))return;
+ CATS.splice(i,1);tasks.forEach(t=>{if(t.cat===old)t.cat=CATS[0]});
+ saveCats();save();renderCats();fillCats();render();
+};
+$('cat-new').onsubmit=e=>{
+ e.preventDefault();
+ const v=$('cat-name').value.trim();
+ if(v&&!CATS.includes(v)){CATS.push(v);saveCats();$('cat-name').value='';renderCats();fillCats();render()}
+};
+$('cat-close').onclick=()=>$('cdlg').close();
+fillCats();
+$('add').onclick=()=>{fillCats();$('form').reset();$('f-time').value='09:00';$('f-date').value=new Date().toLocaleDateString('sv');$('dlg').showModal()};
 $('cancel').onclick=()=>$('dlg').close();
 $('form').onsubmit=()=>{
  tasks.push({id:Date.now(),title:$('f-title').value.trim(),cat:$('f-cat').value,date:$('f-date').value,time:$('f-time').value,rep:$('f-rep').value,done:false,notified:false});

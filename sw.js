@@ -1,4 +1,4 @@
-const CACHE = 'lemiecose-v1';
+const CACHE = 'lemiecose-v2';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -13,8 +13,16 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
+// Prima la rete (così gli aggiornamenti arrivano subito), poi la cache se sei offline
 self.addEventListener('fetch', e => {
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  if (e.request.method !== 'GET') return;
+  e.respondWith(
+    fetch(e.request).then(res => {
+      const copy = res.clone();
+      caches.open(CACHE).then(c => c.put(e.request, copy));
+      return res;
+    }).catch(() => caches.match(e.request))
+  );
 });
 
 self.addEventListener('notificationclick', e => {
