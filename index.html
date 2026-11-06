@@ -38,6 +38,9 @@ h2.late{color:var(--red)}
 .lbox{max-width:420px;margin:0 auto;padding:60px 16px}
 .err{color:var(--red);font-size:14px;margin-top:10px;min-height:18px}
 #toast{position:fixed;left:16px;right:16px;top:calc(10px + env(safe-area-inset-top));background:var(--red);color:#fff;padding:12px;border-radius:12px;font-size:14px;display:none;z-index:99}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.item{border-left:5px solid var(--cc,transparent)}
+.crow input[type=color]{flex:none;width:44px;height:44px;padding:2px}
 .empty{text-align:center;color:var(--muted);padding:40px 16px}
 .fab{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:32px;box-shadow:0 4px 14px rgba(0,0,0,.3)}
 dialog{border:none;border-radius:20px;padding:20px;width:calc(100% - 32px);max-width:420px;background:var(--card);color:var(--text)}
@@ -140,19 +143,33 @@ function friendly(e){
 async function fail(e){const m=friendly(e);if(m===null){showLogin();return}toast(m);try{await loadAll()}catch(_){}}
 
 // ---------- Stato ----------
-let tasks=[],CATS=[],filter='Tutte';
+let tasks=[],CATS=[],filter='Tutte',COL={},hasColor=false;
+const LC=ls.get('lemiecose.colors')||{};
+const PAL=['#e5484d','#f76b15','#e5a50a','#30a46c','#12a594','#0090ff','#6e56cf','#d6409f','#a18072','#8e8e93'];
+const colorOf=n=>COL[n]||'#8e8e93';
+const pickColor=()=>PAL.find(c=>!Object.values(COL).includes(c))||PAL[Object.keys(COL).length%PAL.length];
+async function persistColor(n,col){
+ COL[n]=col;
+ if(hasColor){try{await api('PATCH','categories?name=eq.'+encodeURIComponent(n),{color:col})}catch(e){}}
+ else{LC[n]=col;ls.set('lemiecose.colors',LC)}
+}
+async function ensureColors(){for(const n of CATS){if(!COL[n])await persistColor(n,pickColor())}}
 const sortCats=()=>CATS.sort((a,b)=>a.localeCompare(b,'it',{sensitivity:'base'}));
 const due=t=>t.date?new Date(t.date+'T'+(t.time||'09:00')):null;
 const fmt=t=>{const d=due(t);if(!d)return'Senza scadenza';return d.toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'short'})+' · '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})};
 const REP={d:'ogni giorno',w:'ogni settimana',m:'ogni mese',y:'ogni anno'};
 function next(t){const d=due(t);if(t.rep==='d')d.setDate(d.getDate()+1);if(t.rep==='w')d.setDate(d.getDate()+7);if(t.rep==='m')d.setMonth(d.getMonth()+1);if(t.rep==='y')d.setFullYear(d.getFullYear()+1);
  const p=n=>String(n).padStart(2,'0');t.date=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())}
-const keep=()=>ls.set('lemiecose.cache2',{tasks,CATS});
+const keep=()=>ls.set('lemiecose.cache2',{tasks,CATS,COL});
 
 async function loadAll(){
  let [t,c]=await Promise.all([api('GET','tasks?select=*&order=id',null,true),api('GET','categories?select=*',null,true)]);
  if(!c.length){c=await api('POST','categories',DEFAULT_CATS.map(name=>({name})),true)}
- tasks=t;CATS=c.map(x=>x.name);sortCats();keep();render();
+ hasColor=c.length>0&&('color' in c[0]);
+ COL=hasColor?{}:{...LC};c.forEach(x=>{if(x.color)COL[x.name]=x.color});
+ tasks=t;CATS=c.map(x=>x.name);sortCats();
+ await ensureColors();
+ keep();render();
 }
 
 // ---------- Schermate ----------
@@ -175,21 +192,22 @@ $('logout').onclick=()=>{if(confirm('Uscire dall’account?')){setSession(null);
 // ---------- Elenco ----------
 function render(){
  if(filter!=='Tutte'&&!CATS.includes(filter))filter='Tutte';
- $('tabs').innerHTML=['Tutte',...CATS].map(c=>`<button class="tab ${c===filter?'on':''}" data-c="${esc(c)}">${esc(c)}</button>`).join('')+'<button class="tab" data-manage="1">⚙︎ Categorie</button>';
+ $('tabs').innerHTML=['Tutte',...CATS].map(c=>{const col=colorOf(c),on=c===filter,all=c==='Tutte';return `<button class="tab ${on?'on':''}" data-c="${esc(c)}" ${on&&!all?`style="background:${col};border-color:${col}"`:''}>${all?'':`<span class="dot" style="background:${on?'#fff':col}"></span>`}${esc(c)}</button>`}).join('')+'<button class="tab" data-manage="1">⚙︎ Categorie</button>';
  const now=new Date(),end=new Date();end.setHours(23,59,59,999);
  const vis=tasks.filter(t=>filter==='Tutte'||t.cat===filter);
  const open=vis.filter(t=>!t.done).sort((a,b)=>(due(a)||1e15)-(due(b)||1e15));
  const groups=[['Scadute',open.filter(t=>due(t)&&due(t)<now),'late'],['Oggi',open.filter(t=>due(t)&&due(t)>=now&&due(t)<=end),''],['Prossime',open.filter(t=>due(t)&&due(t)>end),''],['Senza scadenza',open.filter(t=>!due(t)),''],['Completate',vis.filter(t=>t.done),'']];
  let h='';
- for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m">${esc(t.cat)} · ${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
+ for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}" style="--cc:${colorOf(t.cat)}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m"><span class="dot" style="background:${colorOf(t.cat)}"></span>${esc(t.cat)} · ${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
  $('list').innerHTML=h||'<div class="empty">Nessuna attività.<br>Tocca + per aggiungerne una.</div>';
  const late=tasks.filter(t=>!t.done&&due(t)&&due(t)<now).length;
  $('sub').textContent=late?late+(late===1?' attività scaduta':' attività scadute'):'Tutto sotto controllo';
  if('setAppBadge' in navigator){late?navigator.setAppBadge(late).catch(()=>{}):navigator.clearAppBadge().catch(()=>{})}
 }
 $('tabs').onclick=e=>{
- if(e.target.dataset.manage){renderCats();$('cdlg').showModal();return}
- if(e.target.dataset.c){filter=e.target.dataset.c;render()}
+ if(e.target.closest('[data-manage]')){renderCats();$('cdlg').showModal();return}
+ const b=e.target.closest('[data-c]');
+ if(b){filter=b.dataset.c;render()}
 };
 $('list').onclick=async e=>{
  const id=e.target.dataset.id,del=e.target.dataset.del;
@@ -215,14 +233,18 @@ $('form').onsubmit=async()=>{
 
 // ---------- Categorie ----------
 function renderCats(){
- $('cat-list').innerHTML=CATS.map((c,i)=>`<div class="crow"><input value="${esc(c)}" data-ren="${i}" maxlength="24"><button type="button" class="del" data-rm="${i}" aria-label="Elimina">✕</button></div>`).join('');
+ $('cat-list').innerHTML=CATS.map((c,i)=>`<div class="crow"><input type="color" value="${colorOf(c)}" data-col="${i}" aria-label="Colore"><input value="${esc(c)}" data-ren="${i}" maxlength="24"><button type="button" class="del" data-rm="${i}" aria-label="Elimina">✕</button></div>`).join('');
 }
 $('cat-list').onchange=async e=>{
+ if(e.target.dataset.col!==undefined){
+  const n=CATS[e.target.dataset.col];await persistColor(n,e.target.value);render();keep();return
+ }
  const i=e.target.dataset.ren;if(i===undefined)return;
  const old=CATS[i],nu=e.target.value.trim();
  if(!nu||(nu!==old&&CATS.includes(nu))){e.target.value=old;return}
  if(nu===old)return;
  CATS[i]=nu;tasks.forEach(t=>{if(t.cat===old)t.cat=nu});if(filter===old)filter=nu;
+ COL[nu]=COL[old];delete COL[old];if(!hasColor){LC[nu]=LC[old];delete LC[old];ls.set('lemiecose.colors',LC)}
  sortCats();renderCats();fillCats();render();keep();
  try{
   await api('PATCH','categories?name=eq.'+encodeURIComponent(old),{name:nu});
@@ -245,8 +267,9 @@ $('cat-new').onsubmit=async e=>{
  e.preventDefault();
  const v=$('cat-name').value.trim();
  if(!v||CATS.includes(v))return;
- CATS.push(v);sortCats();$('cat-name').value='';renderCats();fillCats();render();keep();
- try{await api('POST','categories',{name:v})}catch(err){fail(err)}
+ const col=pickColor();CATS.push(v);COL[v]=col;if(!hasColor){LC[v]=col;ls.set('lemiecose.colors',LC)}
+ sortCats();$('cat-name').value='';renderCats();fillCats();render();keep();
+ try{await api('POST','categories',hasColor?{name:v,color:col}:{name:v})}catch(err){fail(err)}
 };
 $('cat-close').onclick=()=>$('cdlg').close();
 
@@ -303,7 +326,7 @@ async function start(){
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 if(session){
  showApp();
- const c=ls.get('lemiecose.cache2');if(c){tasks=c.tasks||[];CATS=c.CATS||[];render()}
+ const c=ls.get('lemiecose.cache2');if(c){tasks=c.tasks||[];CATS=c.CATS||[];COL=c.COL||{};render()}
  start();
 }else showLogin();
 </script>
