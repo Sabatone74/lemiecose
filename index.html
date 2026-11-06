@@ -35,6 +35,9 @@ h2.late{color:var(--red)}
 .del{background:none;border:none;color:var(--muted);font-size:20px;padding:4px 8px}
 .crow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
 .crow input{flex:1}
+.lbox{max-width:420px;margin:0 auto;padding:60px 16px}
+.err{color:var(--red);font-size:14px;margin-top:10px;min-height:18px}
+#toast{position:fixed;left:16px;right:16px;top:calc(10px + env(safe-area-inset-top));background:var(--red);color:#fff;padding:12px;border-radius:12px;font-size:14px;display:none;z-index:99}
 .empty{text-align:center;color:var(--muted);padding:40px 16px}
 .fab{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:32px;box-shadow:0 4px 14px rgba(0,0,0,.3)}
 dialog{border:none;border-radius:20px;padding:20px;width:calc(100% - 32px);max-width:420px;background:var(--card);color:var(--text)}
@@ -50,11 +53,24 @@ input,select{width:100%;padding:11px;border-radius:10px;border:1px solid var(--l
 </style>
 </head>
 <body>
-<header><h1>Le mie cose</h1><div class="sub" id="sub"></div></header>
+<div id="login" style="display:none">
+<form id="lform" class="lbox">
+<h1>Le mie cose</h1>
+<div class="sub" style="margin-bottom:12px">Accedi per vedere le tue attività su tutti i dispositivi.</div>
+<label>Email</label><input id="l-mail" type="email" autocomplete="username" required>
+<label>Password</label><input id="l-pass" type="password" autocomplete="current-password" required>
+<div id="lerr" class="err"></div>
+<div class="btns"><button class="ok" type="submit" id="lbtn">Accedi</button></div>
+</form>
+</div>
+<div id="toast"></div>
+<div id="app" style="display:none">
+<header><div style="display:flex;justify-content:space-between;align-items:flex-start"><h1>Le mie cose</h1><button class="tab" id="logout" style="margin-top:6px">Esci</button></div><div class="sub" id="sub"></div></header>
 <div class="bell" id="bell"></div>
 <div class="tabs" id="tabs"></div>
 <main id="list"></main>
 <button class="fab" id="add" aria-label="Aggiungi">+</button>
+</div>
 
 <dialog id="dlg">
 <form method="dialog" id="form">
@@ -83,22 +99,80 @@ input,select{width:100%;padding:11px;border-radius:10px;border:1px solid var(--l
 </dialog>
 
 <script>
-const CKEY='lemiecose.cats';
-let CATS=['Casa','Salute','Spese','Famiglia','Altro'];
-try{const c=JSON.parse(localStorage.getItem(CKEY));if(Array.isArray(c)&&c.length)CATS=c}catch(e){}
-const sortCats=()=>CATS.sort((a,b)=>a.localeCompare(b,'it',{sensitivity:'base'}));
-sortCats();
-const saveCats=()=>{sortCats();try{localStorage.setItem(CKEY,JSON.stringify(CATS))}catch(e){}};
-const KEY='lemiecose.v1';
-let tasks=[];try{tasks=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){}
-let filter='Tutte';
+const SB='https://jsgdrrlgszlamleyesku.supabase.co';
+const KEY='sb_publishable_6Dz19Npg9invYtyTtq9YDQ_prrtXWzl';
+const DEFAULT_CATS=['Casa','Salute','Spese','Famiglia','Altro'];
 const $=id=>document.getElementById(id);
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(tasks))}catch(e){}};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ls={get:k=>{try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+
+// ---------- Collegamento al database ----------
+let session=ls.get('lemiecose.session');
+const setSession=s=>{session=s;s?ls.set('lemiecose.session',s):ls.del('lemiecose.session')};
+async function authReq(grant,body){
+ const r=await fetch(SB+'/auth/v1/token?grant_type='+grant,{method:'POST',headers:{apikey:KEY,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const j=await r.json().catch(()=>({}));
+ if(!r.ok)throw new Error(j.error_description||j.msg||j.message||'Accesso non riuscito');
+ setSession({access:j.access_token,refresh:j.refresh_token,exp:Date.now()+(j.expires_in||3600)*1000-60000});
+}
+async function token(){
+ if(!session)throw new Error('no-session');
+ if(Date.now()>session.exp){
+  try{await authReq('refresh_token',{refresh_token:session.refresh})}
+  catch(e){if(e instanceof TypeError)throw e;setSession(null);throw new Error('no-session')}
+ }
+ return session.access;
+}
+async function api(method,path,body,rep){
+ const tk=await token();
+ const r=await fetch(SB+'/rest/v1/'+path,{method,headers:{apikey:KEY,Authorization:'Bearer '+tk,'Content-Type':'application/json',Prefer:rep?'return=representation':'return=minimal'},body:body?JSON.stringify(body):undefined});
+ if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.message||('Errore '+r.status))}
+ return rep?r.json():null;
+}
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display='none',5000)}
+function friendly(e){
+ const m=e.message||'';
+ if(m==='no-session')return null;
+ if(e instanceof TypeError)return'Nessuna connessione: riprova tra poco.';
+ if(/schema cache|does not exist/i.test(m))return'Le tabelle del database non sono state create: esegui il testo SQL su Supabase.';
+ return m;
+}
+async function fail(e){const m=friendly(e);if(m===null){showLogin();return}toast(m);try{await loadAll()}catch(_){}}
+
+// ---------- Stato ----------
+let tasks=[],CATS=[],filter='Tutte';
+const sortCats=()=>CATS.sort((a,b)=>a.localeCompare(b,'it',{sensitivity:'base'}));
 const due=t=>t.date?new Date(t.date+'T'+(t.time||'09:00')):null;
 const fmt=t=>{const d=due(t);if(!d)return'Senza scadenza';return d.toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'short'})+' · '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})};
 const REP={d:'ogni giorno',w:'ogni settimana',m:'ogni mese',y:'ogni anno'};
 function next(t){const d=due(t);if(t.rep==='d')d.setDate(d.getDate()+1);if(t.rep==='w')d.setDate(d.getDate()+7);if(t.rep==='m')d.setMonth(d.getMonth()+1);if(t.rep==='y')d.setFullYear(d.getFullYear()+1);
- const p=n=>String(n).padStart(2,'0');t.date=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());t.notified=false}
+ const p=n=>String(n).padStart(2,'0');t.date=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())}
+const keep=()=>ls.set('lemiecose.cache2',{tasks,CATS});
+
+async function loadAll(){
+ let [t,c]=await Promise.all([api('GET','tasks?select=*&order=id',null,true),api('GET','categories?select=*',null,true)]);
+ if(!c.length){c=await api('POST','categories',DEFAULT_CATS.map(name=>({name})),true)}
+ tasks=t;CATS=c.map(x=>x.name);sortCats();keep();render();
+}
+
+// ---------- Schermate ----------
+function showLogin(){$('login').style.display='block';$('app').style.display='none'}
+function showApp(){$('login').style.display='none';$('app').style.display='block'}
+
+$('lform').onsubmit=async e=>{
+ e.preventDefault();$('lerr').textContent='';$('lbtn').disabled=true;
+ try{
+  await authReq('password',{email:$('l-mail').value.trim(),password:$('l-pass').value});
+  $('l-pass').value='';showApp();await start();
+ }catch(err){
+  const m=err instanceof TypeError?'Nessuna connessione.':(/invalid/i.test(err.message)?'Email o password non corrette.':err.message);
+  $('lerr').textContent=m;
+ }
+ $('lbtn').disabled=false;
+};
+$('logout').onclick=()=>{if(confirm('Uscire dall’account?')){setSession(null);ls.del('lemiecose.cache2');tasks=[];CATS=[];showLogin()}};
+
+// ---------- Elenco ----------
 function render(){
  if(filter!=='Tutte'&&!CATS.includes(filter))filter='Tutte';
  $('tabs').innerHTML=['Tutte',...CATS].map(c=>`<button class="tab ${c===filter?'on':''}" data-c="${esc(c)}">${esc(c)}</button>`).join('')+'<button class="tab" data-manage="1">⚙︎ Categorie</button>';
@@ -107,57 +181,77 @@ function render(){
  const open=vis.filter(t=>!t.done).sort((a,b)=>(due(a)||1e15)-(due(b)||1e15));
  const groups=[['Scadute',open.filter(t=>due(t)&&due(t)<now),'late'],['Oggi',open.filter(t=>due(t)&&due(t)>=now&&due(t)<=end),''],['Prossime',open.filter(t=>due(t)&&due(t)>end),''],['Senza scadenza',open.filter(t=>!due(t)),''],['Completate',vis.filter(t=>t.done),'']];
  let h='';
- for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m">${esc(t.cat)} ·${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
+ for(const [n,l,c] of groups){if(!l.length)continue;h+=`<h2 class="${c}">${n} (${l.length})</h2>`+l.map(t=>`<div class="item ${t.done?'done':''} ${c}"><button class="chk" data-id="${t.id}">${t.done?'✓':''}</button><div class="body"><div class="t">${esc(t.title)}</div><div class="m">${esc(t.cat)} · ${fmt(t)}${t.rep?' · '+REP[t.rep]:''}</div></div><button class="del" data-del="${t.id}">✕</button></div>`).join('')}
  $('list').innerHTML=h||'<div class="empty">Nessuna attività.<br>Tocca + per aggiungerne una.</div>';
  const late=tasks.filter(t=>!t.done&&due(t)&&due(t)<now).length;
  $('sub').textContent=late?late+(late===1?' attività scaduta':' attività scadute'):'Tutto sotto controllo';
  if('setAppBadge' in navigator){late?navigator.setAppBadge(late).catch(()=>{}):navigator.clearAppBadge().catch(()=>{})}
 }
-const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 $('tabs').onclick=e=>{
  if(e.target.dataset.manage){renderCats();$('cdlg').showModal();return}
  if(e.target.dataset.c){filter=e.target.dataset.c;render()}
 };
-$('list').onclick=e=>{
+$('list').onclick=async e=>{
  const id=e.target.dataset.id,del=e.target.dataset.del;
- if(id){const t=tasks.find(x=>x.id==id);if(t.rep&&!t.done&&due(t)){next(t)}else t.done=!t.done;save();render()}
- if(del&&confirm('Eliminare questa attività?')){tasks=tasks.filter(x=>x.id!=del);save();render()}
+ try{
+  if(id){
+   const t=tasks.find(x=>x.id==id);
+   if(t.rep&&!t.done&&due(t)){next(t);render();keep();await api('PATCH','tasks?id=eq.'+t.id,{date:t.date})}
+   else{t.done=!t.done;render();keep();await api('PATCH','tasks?id=eq.'+t.id,{done:t.done})}
+  }
+  if(del&&confirm('Eliminare questa attività?')){tasks=tasks.filter(x=>x.id!=del);render();keep();await api('DELETE','tasks?id=eq.'+del)}
+ }catch(err){fail(err)}
 };
+
+// ---------- Nuova attività ----------
 const fillCats=()=>{$('f-cat').innerHTML=CATS.map(c=>`<option>${esc(c)}</option>`).join('')};
+$('add').onclick=()=>{fillCats();$('form').reset();$('f-time').value='09:00';$('f-date').value=new Date().toLocaleDateString('sv');$('dlg').showModal()};
+$('cancel').onclick=()=>$('dlg').close();
+$('form').onsubmit=async()=>{
+ const row={title:$('f-title').value.trim(),cat:$('f-cat').value,date:$('f-date').value||null,time:$('f-time').value||null,rep:$('f-rep').value||null};
+ try{const r=await api('POST','tasks',row,true);tasks.push(r[0]);keep();render();askPerm()}
+ catch(err){fail(err)}
+};
+
+// ---------- Categorie ----------
 function renderCats(){
  $('cat-list').innerHTML=CATS.map((c,i)=>`<div class="crow"><input value="${esc(c)}" data-ren="${i}" maxlength="24"><button type="button" class="del" data-rm="${i}" aria-label="Elimina">✕</button></div>`).join('');
 }
-$('cat-list').onchange=e=>{
+$('cat-list').onchange=async e=>{
  const i=e.target.dataset.ren;if(i===undefined)return;
  const old=CATS[i],nu=e.target.value.trim();
  if(!nu||(nu!==old&&CATS.includes(nu))){e.target.value=old;return}
- CATS[i]=nu;tasks.forEach(t=>{if(t.cat===old)t.cat=nu});
- if(filter===old)filter=nu;
- saveCats();save();renderCats();fillCats();render();
+ if(nu===old)return;
+ CATS[i]=nu;tasks.forEach(t=>{if(t.cat===old)t.cat=nu});if(filter===old)filter=nu;
+ sortCats();renderCats();fillCats();render();keep();
+ try{
+  await api('PATCH','categories?name=eq.'+encodeURIComponent(old),{name:nu});
+  await api('PATCH','tasks?cat=eq.'+encodeURIComponent(old),{cat:nu});
+ }catch(err){fail(err)}
 };
-$('cat-list').onclick=e=>{
+$('cat-list').onclick=async e=>{
  const i=e.target.dataset.rm;if(i===undefined)return;
  if(CATS.length<2){alert('Serve almeno una categoria.');return}
  const old=CATS[i];
  if(!confirm('Eliminare "'+old+'"? Le sue attività passeranno a un’altra categoria.'))return;
- CATS.splice(i,1);tasks.forEach(t=>{if(t.cat===old)t.cat=CATS[0]});
- saveCats();save();renderCats();fillCats();render();
+ CATS.splice(i,1);const dest=CATS[0];tasks.forEach(t=>{if(t.cat===old)t.cat=dest});
+ renderCats();fillCats();render();keep();
+ try{
+  await api('PATCH','tasks?cat=eq.'+encodeURIComponent(old),{cat:dest});
+  await api('DELETE','categories?name=eq.'+encodeURIComponent(old));
+ }catch(err){fail(err)}
 };
-$('cat-new').onsubmit=e=>{
+$('cat-new').onsubmit=async e=>{
  e.preventDefault();
  const v=$('cat-name').value.trim();
- if(v&&!CATS.includes(v)){CATS.push(v);saveCats();$('cat-name').value='';renderCats();fillCats();render()}
+ if(!v||CATS.includes(v))return;
+ CATS.push(v);sortCats();$('cat-name').value='';renderCats();fillCats();render();keep();
+ try{await api('POST','categories',{name:v})}catch(err){fail(err)}
 };
 $('cat-close').onclick=()=>$('cdlg').close();
-fillCats();
-$('add').onclick=()=>{fillCats();$('form').reset();$('f-time').value='09:00';$('f-date').value=new Date().toLocaleDateString('sv');$('dlg').showModal()};
-$('cancel').onclick=()=>$('dlg').close();
-$('form').onsubmit=()=>{
- tasks.push({id:Date.now(),title:$('f-title').value.trim(),cat:$('f-cat').value,date:$('f-date').value,time:$('f-time').value,rep:$('f-rep').value,done:false,notified:false});
- save();render();askPerm();
-};
 
-// Notifiche
+// ---------- Notifiche (ogni dispositivo ricorda le sue) ----------
+let notified=ls.get('lemiecose.notified')||{};
 function bell(){
  const b=$('bell');
  if(!('Notification' in window)){b.style.display='block';b.textContent='Per le notifiche aggiungi prima l’app alla schermata Home (Condividi → Aggiungi alla schermata Home), poi riaprila da lì.';return}
@@ -171,15 +265,47 @@ async function notify(t){
   else new Notification(t.title,{body:t.cat})}catch(e){}
 }
 function check(){
- if(!('Notification' in window)||Notification.permission!=='granted'){render();return}
+ if(!session){return}
+ render();
+ if(!('Notification' in window)||Notification.permission!=='granted')return;
  const now=new Date();let ch=false;
- for(const t of tasks){if(!t.done&&!t.notified&&due(t)&&due(t)<=now){t.notified=true;ch=true;notify(t)}}
- if(ch)save();render();
+ for(const t of tasks){
+  const k=t.id+'|'+t.date+'|'+t.time;
+  if(!t.done&&due(t)&&due(t)<=now&&!notified[k]){notified[k]=1;ch=true;notify(t)}
+ }
+ if(ch)ls.set('lemiecose.notified',notified);
 }
 setInterval(check,30000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)check()});
+document.addEventListener('visibilitychange',async()=>{if(!document.hidden&&session){try{await loadAll()}catch(e){const m=friendly(e);if(m===null)showLogin()}check()}});
+
+// ---------- Importa i dati vecchi di questo dispositivo ----------
+async function importOld(){
+ if(ls.get('lemiecose.imported'))return;
+ const old=ls.get('lemiecose.v1');
+ if(!Array.isArray(old)||!old.length){ls.set('lemiecose.imported',1);return}
+ const ok=confirm('Su questo dispositivo ci sono '+old.length+' attività salvate prima. Vuoi importarle nel tuo account online?');
+ ls.set('lemiecose.imported',1);
+ if(!ok)return;
+ const cats=new Set(CATS);const newCats=[];
+ for(const t of old){if(t.cat&&!cats.has(t.cat)){cats.add(t.cat);newCats.push({name:t.cat})}}
+ try{
+  if(newCats.length)await api('POST','categories',newCats);
+  await api('POST','tasks',old.map(t=>({title:t.title,cat:t.cat||'Altro',date:t.date||null,time:t.time||null,rep:t.rep||null,done:!!t.done})));
+  await loadAll();toast('Attività importate.');
+ }catch(err){ls.del('lemiecose.imported');fail(err)}
+}
+
+// ---------- Avvio ----------
+async function start(){
+ try{await loadAll();await importOld();bell();check()}
+ catch(e){const m=friendly(e);if(m===null){showLogin();return}toast(m)}
+}
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
-bell();check();
+if(session){
+ showApp();
+ const c=ls.get('lemiecose.cache2');if(c){tasks=c.tasks||[];CATS=c.CATS||[];render()}
+ start();
+}else showLogin();
 </script>
 </body>
 </html>
